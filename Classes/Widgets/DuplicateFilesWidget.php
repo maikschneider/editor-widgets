@@ -14,6 +14,7 @@ declare(strict_types=1);
  */
 namespace Sitegeist\EditorWidgets\Widgets;
 
+use Doctrine\DBAL\ArrayParameterType;
 use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Backend\Utility\BackendUtility;
 use TYPO3\CMS\Backend\View\BackendViewFactory;
@@ -79,42 +80,35 @@ final class DuplicateFilesWidget implements WidgetInterface, RequestAwareWidgetI
     public function getFileUidsFromSha1(array $duplicatedSha1): array
     {
         $queryBuilder = $this->connectionPool->getConnectionForTable('sys_file')->createQueryBuilder();
-        $uids = [];
-        foreach ($duplicatedSha1 as $sha1) {
-            $uids[] = $queryBuilder
+        return $queryBuilder
             ->select('uid')
             ->from('sys_file')
             ->where(
-                $queryBuilder->expr()->eq('sha1', $queryBuilder->createNamedParameter($sha1, Connection::PARAM_STR))
+                $queryBuilder->expr()->in('sha1', $queryBuilder->createNamedParameter($duplicatedSha1, ArrayParameterType::STRING)),
             )
             ->executeQuery()
             ->fetchFirstColumn();
-        }
-        return $uids;
     }
     private function getDuplicates(array $fileUidGroups): array
     {
-        $duplicates = [];
-        foreach ($fileUidGroups as $fileUidList) {
-            $duplicates[] = array_filter(array_map(
-                function ($uid) {
-                    try {
-                        $file = $this->resourceFactory->getFileObject((int)$uid);
-                        if (!$file->exists() || $file->isMissing()) {
-                            return null;
-                        }
-                        $file->getParentFolder();
-                    } catch (FileDoesNotExistException | InsufficientFolderAccessPermissionsException | \Exception) {
+        $duplicates = array_filter(array_map(
+            function ($uid) {
+                try {
+                    $file = $this->resourceFactory->getFileObject((int)$uid);
+                    if (!$file->exists() || $file->isMissing()) {
                         return null;
                     }
-                    return [
-                        'file' => $file,
-                        'referenceCount' => BackendUtility::referenceCount('sys_file', $file->getUid()),
-                    ];
-                },
-                $fileUidList
-            ));
-        }
+                    $file->getParentFolder();
+                } catch (FileDoesNotExistException | InsufficientFolderAccessPermissionsException | \Exception) {
+                    return null;
+                }
+                return [
+                    'file' => $file,
+                    'referenceCount' => BackendUtility::referenceCount('sys_file', $file->getUid()),
+                ];
+            },
+            $fileUidGroups
+        ));
         return array_filter($duplicates, static function ($files) { return count($files) >= 2; });
     }
     public function getOptions(): array
